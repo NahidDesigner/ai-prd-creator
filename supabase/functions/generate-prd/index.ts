@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.89.0";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -37,6 +38,134 @@ When generating a PRD, you should:
 
 Be thorough but concise. Every instruction should be clear enough that an AI coding assistant can follow it without additional clarification.`;
 
+interface ApiConfig {
+  provider: 'lovable' | 'openai' | 'google' | 'anthropic';
+  apiKey: string;
+  model: string;
+  endpoint: string;
+}
+
+async function getApiConfig(supabase: any, userId: string | null): Promise<ApiConfig> {
+  // Default to Lovable AI
+  const lovableConfig: ApiConfig = {
+    provider: 'lovable',
+    apiKey: Deno.env.get('LOVABLE_API_KEY') || '',
+    model: 'google/gemini-2.5-flash',
+    endpoint: 'https://ai.gateway.lovable.dev/v1/chat/completions',
+  };
+
+  try {
+    // First, check if user has their own API key
+    if (userId) {
+      const { data: userKey } = await supabase
+        .from('api_keys')
+        .select('key_type, api_key')
+        .eq('user_id', userId)
+        .eq('is_global', false)
+        .limit(1)
+        .maybeSingle();
+
+      if (userKey?.api_key) {
+        console.log('Using user API key:', userKey.key_type);
+        return getProviderConfig(userKey.key_type, userKey.api_key);
+      }
+    }
+
+    // Then, check for admin global API key
+    const { data: globalKey } = await supabase
+      .from('api_keys')
+      .select('key_type, api_key')
+      .eq('is_global', true)
+      .limit(1)
+      .maybeSingle();
+
+    if (globalKey?.api_key) {
+      console.log('Using admin global API key:', globalKey.key_type);
+      return getProviderConfig(globalKey.key_type, globalKey.api_key);
+    }
+  } catch (error) {
+    console.error('Error fetching API keys:', error);
+  }
+
+  // Fall back to Lovable AI
+  console.log('Using default Lovable AI');
+  return lovableConfig;
+}
+
+function getProviderConfig(keyType: string, apiKey: string): ApiConfig {
+  switch (keyType) {
+    case 'openai':
+      return {
+        provider: 'openai',
+        apiKey,
+        model: 'gpt-4o',
+        endpoint: 'https://api.openai.com/v1/chat/completions',
+      };
+    case 'google':
+      return {
+        provider: 'google',
+        apiKey,
+        model: 'gemini-2.0-flash',
+        endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+      };
+    case 'anthropic':
+      return {
+        provider: 'anthropic',
+        apiKey,
+        model: 'claude-sonnet-4-20250514',
+        endpoint: 'https://api.anthropic.com/v1/messages',
+      };
+    default:
+      return {
+        provider: 'lovable',
+        apiKey: Deno.env.get('LOVABLE_API_KEY') || '',
+        model: 'google/gemini-2.5-flash',
+        endpoint: 'https://ai.gateway.lovable.dev/v1/chat/completions',
+      };
+  }
+}
+
+async function callAI(config: ApiConfig, systemPrompt: string, userMessage: string): Promise<Response> {
+  if (config.provider === 'anthropic') {
+    // Anthropic has a different API format
+    const response = await fetch(config.endpoint, {
+      method: 'POST',
+      headers: {
+        'x-api-key': config.apiKey,
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: config.model,
+        max_tokens: 8192,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
+        stream: true,
+      }),
+    });
+    return response;
+  }
+
+  // OpenAI-compatible APIs (OpenAI, Google, Lovable)
+  const response = await fetch(config.endpoint, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${config.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: config.model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userMessage }
+      ],
+      stream: true,
+    }),
+  });
+
+  return response;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -44,8 +173,73 @@ serve(async (req) => {
 
   try {
     const { requirements, projectContext, platform } = await req.json();
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
+
+    // Get user ID from authorization header if present
+    let userId: string | null = null;
+    const authHeader = req.headers.get('authorization');
     
+    if (authHeader) {
+      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+      const supabase = createClient(supabaseUrl, supabaseKey);
+
+      // Decode JWT to get user ID
+      const token = authHeader.replace('Bearer ', '');
+      const { data: { user } } = await supabase.auth.getUser(token);
+      userId = user?.id || null;
+
+      // Get API configuration (user key > admin key > lovable default)
+      const apiConfig = await getApiConfig(supabase, userId);
+
+      const userMessage = `
+Generate a detailed PRD for the following project requirements. This PRD will be used with ${platform || 'AI coding assistants'}.
+
+**User Requirements:**
+${requirements}
+
+${projectContext ? `**Existing Project Context:**
+${projectContext}
+
+Please analyze this existing project and create a PRD that builds upon or improves the current architecture.` : ''}
+
+Please generate a comprehensive, well-structured PRD that an AI coding assistant can follow step-by-step to implement this project.
+`;
+
+      console.log('Generating PRD for platform:', platform);
+      console.log('Using provider:', apiConfig.provider, 'model:', apiConfig.model);
+
+      const response = await callAI(apiConfig, systemPrompt, userMessage);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('AI API error:', response.status, errorText);
+        
+        if (response.status === 429) {
+          return new Response(JSON.stringify({ error: 'Rate limit exceeded. Please try again in a moment.' }), {
+            status: 429,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        if (response.status === 402) {
+          return new Response(JSON.stringify({ error: 'Usage limit reached. Please add credits to continue.' }), {
+            status: 402,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+          });
+        }
+        
+        return new Response(JSON.stringify({ error: 'Failed to generate PRD. Check your API key configuration.' }), {
+          status: 500,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(response.body, {
+        headers: { ...corsHeaders, 'Content-Type': 'text/event-stream' },
+      });
+    }
+
+    // No auth header - use default Lovable AI
+    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
       throw new Error('LOVABLE_API_KEY is not configured');
     }
@@ -64,8 +258,7 @@ Please analyze this existing project and create a PRD that builds upon or improv
 Please generate a comprehensive, well-structured PRD that an AI coding assistant can follow step-by-step to implement this project.
 `;
 
-    console.log('Generating PRD for platform:', platform);
-    console.log('Requirements length:', requirements?.length);
+    console.log('Generating PRD (unauthenticated) for platform:', platform);
 
     const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
       method: 'POST',
