@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
 
 const GENERATE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-prd`;
 
@@ -46,6 +47,7 @@ export function usePRDGenerator() {
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let fullContent = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -69,12 +71,30 @@ export function usePRDGenerator() {
             const parsed = JSON.parse(jsonStr);
             const content = parsed.choices?.[0]?.delta?.content;
             if (content) {
+              fullContent += content;
               setPrdContent((prev) => prev + content);
             }
           } catch {
             buffer = line + "\n" + buffer;
             break;
           }
+        }
+      }
+
+      // Save to database if user is logged in
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user && fullContent) {
+        const title = generateTitle(requirements);
+        const { error } = await supabase.from("prds").insert({
+          user_id: user.id,
+          title,
+          requirements,
+          platform,
+          content: fullContent,
+        });
+
+        if (error) {
+          console.error("Failed to save PRD:", error);
         }
       }
 
@@ -91,6 +111,12 @@ export function usePRDGenerator() {
     prdContent,
     isGenerating,
     generatePRD,
+    setPrdContent,
     clearPRD: () => setPrdContent(""),
   };
+}
+
+function generateTitle(requirements: string): string {
+  const words = requirements.split(/\s+/).slice(0, 6).join(" ");
+  return words.length > 50 ? words.slice(0, 50) + "..." : words || "Untitled PRD";
 }
