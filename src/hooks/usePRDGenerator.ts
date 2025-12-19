@@ -1,8 +1,7 @@
 import { useState, useCallback } from "react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-
-const GENERATE_URL = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-prd`;
+import { generatePRDStream } from "@/lib/prdGenerator";
 
 export function usePRDGenerator() {
   const [prdContent, setPrdContent] = useState("");
@@ -22,81 +21,12 @@ export function usePRDGenerator() {
     setPrdContent("");
 
     try {
-      // Get the user's session token for authentication
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        toast.error("Please sign in to generate PRDs");
-        setIsGenerating(false);
-        return;
-      }
-
-      const response = await fetch(GENERATE_URL, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          requirements,
-          platform,
-          projectContext,
-        }),
-      });
-
-      if (!response.ok) {
-        let errorMessage = "Failed to generate PRD";
-        try {
-          const error = await response.json();
-          errorMessage = error.error || error.message || errorMessage;
-          console.error("PRD Generation Error Details:", error);
-        } catch (e) {
-          // If response is not JSON, get text
-          const errorText = await response.text();
-          errorMessage = errorText || errorMessage;
-          console.error("PRD Generation Error (non-JSON):", errorText);
-        }
-        throw new Error(errorMessage);
-      }
-
-      if (!response.body) {
-        throw new Error("No response body");
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
       let fullContent = "";
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-
-        let newlineIndex: number;
-        while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
-          let line = buffer.slice(0, newlineIndex);
-          buffer = buffer.slice(newlineIndex + 1);
-
-          if (line.endsWith("\r")) line = line.slice(0, -1);
-          if (line.startsWith(":") || line.trim() === "") continue;
-          if (!line.startsWith("data: ")) continue;
-
-          const jsonStr = line.slice(6).trim();
-          if (jsonStr === "[DONE]") break;
-
-          try {
-            const parsed = JSON.parse(jsonStr);
-            const content = parsed.choices?.[0]?.delta?.content;
-            if (content) {
-              fullContent += content;
-              setPrdContent((prev) => prev + content);
-            }
-          } catch {
-            buffer = line + "\n" + buffer;
-            break;
-          }
-        }
+      // Use the new direct API call generator
+      for await (const chunk of generatePRDStream(requirements, platform, projectContext)) {
+        fullContent += chunk;
+        setPrdContent((prev) => prev + chunk);
       }
 
       // Save to database if user is logged in
