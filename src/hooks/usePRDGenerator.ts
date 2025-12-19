@@ -44,8 +44,18 @@ export function usePRDGenerator() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to generate PRD");
+        let errorMessage = "Failed to generate PRD";
+        try {
+          const error = await response.json();
+          errorMessage = error.error || error.message || errorMessage;
+          console.error("PRD Generation Error Details:", error);
+        } catch (e) {
+          // If response is not JSON, get text
+          const errorText = await response.text();
+          errorMessage = errorText || errorMessage;
+          console.error("PRD Generation Error (non-JSON):", errorText);
+        }
+        throw new Error(errorMessage);
       }
 
       if (!response.body) {

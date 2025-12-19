@@ -46,6 +46,9 @@ interface ApiConfig {
 }
 
 async function getApiConfig(supabase: any, userId: string | null): Promise<ApiConfig> {
+  console.log('=== getApiConfig called ===');
+  console.log('User ID:', userId);
+  
   // Default to Google Gemini (free tier available)
   const defaultConfig: ApiConfig = {
     provider: 'google',
@@ -63,10 +66,16 @@ async function getApiConfig(supabase: any, userId: string | null): Promise<ApiCo
     endpoint: 'https://ai.gateway.lovable.dev/v1/chat/completions',
   };
 
+  console.log('Environment check:', {
+    hasLovableKey: !!lovableApiKey,
+    hasGoogleKey: !!defaultConfig.apiKey
+  });
+
   try {
     // First, check if user has their own API key
     if (userId) {
-      const { data: userKey } = await supabase
+      console.log('Checking for user API key...');
+      const { data: userKey, error: userKeyError } = await supabase
         .from('api_keys')
         .select('key_type, api_key')
         .eq('user_id', userId)
@@ -74,26 +83,35 @@ async function getApiConfig(supabase: any, userId: string | null): Promise<ApiCo
         .limit(1)
         .maybeSingle();
 
-      if (userKey?.api_key) {
-        console.log('Using user API key:', userKey.key_type);
+      if (userKeyError) {
+        console.error('Error fetching user API key:', userKeyError);
+      } else if (userKey?.api_key) {
+        console.log('✅ Found user API key:', userKey.key_type);
         return getProviderConfig(userKey.key_type, userKey.api_key);
+      } else {
+        console.log('No user API key found');
       }
     }
 
     // Then, check for admin global API key (using service role to bypass RLS)
-    const { data: globalKey } = await supabase
+    console.log('Checking for admin global API key...');
+    const { data: globalKey, error: globalKeyError } = await supabase
       .from('api_keys')
       .select('key_type, api_key')
       .eq('is_global', true)
       .limit(1)
       .maybeSingle();
 
-    if (globalKey?.api_key) {
-      console.log('Using admin global API key:', globalKey.key_type);
+    if (globalKeyError) {
+      console.error('Error fetching global API key:', globalKeyError);
+    } else if (globalKey?.api_key) {
+      console.log('✅ Found admin global API key:', globalKey.key_type);
       return getProviderConfig(globalKey.key_type, globalKey.api_key);
+    } else {
+      console.log('No admin global API key found');
     }
   } catch (error) {
-    console.error('Error fetching API keys:', error);
+    console.error('Error fetching API keys from database:', error);
   }
 
   // Fall back to Lovable AI if API key is available, otherwise use Google Gemini
@@ -236,14 +254,35 @@ serve(async (req) => {
 
     const userId = user.id;
 
+    console.log('=== PRD Generation Debug ===');
+    console.log('User ID:', userId);
+    
     // Get API configuration (user key > admin key > lovable/gemini default)
     const apiConfig = await getApiConfig(supabase, userId);
+    
+    console.log('API Config Selected:', {
+      provider: apiConfig.provider,
+      model: apiConfig.model,
+      hasApiKey: !!apiConfig.apiKey,
+      apiKeyLength: apiConfig.apiKey ? apiConfig.apiKey.length : 0,
+      apiKeyPrefix: apiConfig.apiKey ? apiConfig.apiKey.substring(0, 10) + '...' : 'empty'
+    });
 
     // Validate that we have an API key
     if (!apiConfig.apiKey || apiConfig.apiKey.trim() === '') {
-      console.error('No API key configured');
+      console.error('No API key configured - checking available options');
+      
+      // Check what's available
+      const hasLovableKey = !!Deno.env.get('LOVABLE_API_KEY');
+      const hasGoogleKey = !!Deno.env.get('GOOGLE_API_KEY') || !!Deno.env.get('GEMINI_API_KEY');
+      
       return new Response(JSON.stringify({ 
-        error: 'AI API key not configured. Please configure LOVABLE_API_KEY or GOOGLE_API_KEY environment variable in the edge function settings.' 
+        error: 'AI API key not configured. Please configure one of: LOVABLE_API_KEY, GOOGLE_API_KEY, or add an API key in the admin panel.',
+        details: {
+          hasLovableKey,
+          hasGoogleKey,
+          userId
+        }
       }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
