@@ -6,6 +6,7 @@ interface AuthContextType {
   user: User | null;
   session: Session | null;
   isLoading: boolean;
+  isSuspended: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
@@ -17,19 +18,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isSuspended, setIsSuspended] = useState(false);
+
+  const checkSuspension = async (userId: string) => {
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("is_suspended")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    if (!error && data?.is_suspended) {
+      setIsSuspended(true);
+      // Sign out suspended users
+      await supabase.auth.signOut();
+      return true;
+    }
+    setIsSuspended(false);
+    return false;
+  };
 
   useEffect(() => {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      (event, session) => {
+      async (event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
+        
+        if (session?.user) {
+          // Defer suspension check
+          setTimeout(() => {
+            checkSuspension(session.user.id);
+          }, 0);
+        } else {
+          setIsSuspended(false);
+        }
+        
         setIsLoading(false);
       }
     );
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then(async ({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
+      
+      if (session?.user) {
+        await checkSuspension(session.user.id);
+      }
+      
       setIsLoading(false);
     });
 
@@ -56,7 +90,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, session, isLoading, signIn, signUp, signOut }}>
+    <AuthContext.Provider value={{ user, session, isLoading, isSuspended, signIn, signUp, signOut }}>
       {children}
     </AuthContext.Provider>
   );
