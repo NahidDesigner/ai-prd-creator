@@ -51,14 +51,16 @@ const Auth = () => {
       } else {
         toast.error(error.message);
       }
-    } else {
-      if (isLogin) {
-        toast.success("Welcome back!");
-        navigate("/");
       } else {
-        toast.success("Account created! Please check your email to verify your account.");
+        if (isLogin) {
+          toast.success("Welcome back!");
+          navigate("/");
+        } else {
+          toast.success("Account created successfully! You can now sign in.");
+          // Switch to login mode after successful signup
+          setIsLogin(true);
+        }
       }
-    }
 
     setIsSubmitting(false);
   };

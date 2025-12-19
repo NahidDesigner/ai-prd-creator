@@ -46,10 +46,19 @@ interface ApiConfig {
 }
 
 async function getApiConfig(supabase: any, userId: string | null): Promise<ApiConfig> {
-  // Default to Lovable AI
+  // Default to Google Gemini (free tier available)
+  const defaultConfig: ApiConfig = {
+    provider: 'google',
+    apiKey: Deno.env.get('GOOGLE_API_KEY') || Deno.env.get('GEMINI_API_KEY') || '',
+    model: 'gemini-2.0-flash',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+  };
+
+  // Try Lovable AI if available
+  const lovableApiKey = Deno.env.get('LOVABLE_API_KEY') || '';
   const lovableConfig: ApiConfig = {
     provider: 'lovable',
-    apiKey: Deno.env.get('LOVABLE_API_KEY') || '',
+    apiKey: lovableApiKey,
     model: 'google/gemini-2.5-flash',
     endpoint: 'https://ai.gateway.lovable.dev/v1/chat/completions',
   };
@@ -87,8 +96,20 @@ async function getApiConfig(supabase: any, userId: string | null): Promise<ApiCo
     console.error('Error fetching API keys:', error);
   }
 
-  // Fall back to Lovable AI
-  console.log('Using default Lovable AI');
+  // Fall back to Lovable AI if API key is available, otherwise use Google Gemini
+  if (lovableApiKey && lovableApiKey.trim() !== '') {
+    console.log('Using default Lovable AI');
+    return lovableConfig;
+  }
+
+  // Use Google Gemini as final fallback (requires GOOGLE_API_KEY or GEMINI_API_KEY env var)
+  if (defaultConfig.apiKey && defaultConfig.apiKey.trim() !== '') {
+    console.log('Using Google Gemini API');
+    return defaultConfig;
+  }
+
+  // If no API keys are configured, return Lovable config anyway (might work without key in some cases)
+  console.warn('No API keys configured. Using Lovable AI endpoint (may fail if authentication required).');
   return lovableConfig;
 }
 
@@ -201,8 +222,19 @@ serve(async (req) => {
 
     const userId = user.id;
 
-    // Get API configuration (user key > admin key > lovable default)
+    // Get API configuration (user key > admin key > lovable/gemini default)
     const apiConfig = await getApiConfig(supabase, userId);
+
+    // Validate that we have an API key
+    if (!apiConfig.apiKey || apiConfig.apiKey.trim() === '') {
+      console.error('No API key configured');
+      return new Response(JSON.stringify({ 
+        error: 'AI API key not configured. Please configure LOVABLE_API_KEY or GOOGLE_API_KEY environment variable in the edge function settings.' 
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
 
     const userMessage = `
 Generate a detailed PRD for the following project requirements. This PRD will be used with ${platform || 'AI coding assistants'}.

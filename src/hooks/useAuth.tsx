@@ -77,11 +77,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signUp = async (email: string, password: string) => {
     const redirectUrl = `${window.location.origin}/`;
-    const { error } = await supabase.auth.signUp({
+    const { data, error } = await supabase.auth.signUp({
       email,
       password,
       options: { emailRedirectTo: redirectUrl },
     });
+    
+    // Note: Users are auto-confirmed via database trigger (see migration: auto_confirm_users.sql)
+    // If signup succeeds, the trigger will automatically confirm the email
+    // So we can immediately try to sign in after a short delay to let the trigger run
+    if (data?.user && !error) {
+      // Wait a moment for the database trigger to auto-confirm
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
+      // Try to sign in - the trigger should have confirmed the email by now
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+      if (!signInError) {
+        // Successfully signed in - user is confirmed
+        return { error: null };
+      }
+    }
+    
     return { error: error as Error | null };
   };
 
