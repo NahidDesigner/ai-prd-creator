@@ -204,8 +204,22 @@ serve(async (req) => {
       });
     }
 
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabaseUrl = Deno.env.get('SUPABASE_URL');
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
+    
+    if (!supabaseUrl || !supabaseKey) {
+      console.error('Missing required environment variables:', {
+        hasSupabaseUrl: !!supabaseUrl,
+        hasSupabaseKey: !!supabaseKey
+      });
+      return new Response(JSON.stringify({ 
+        error: 'Server configuration error: Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables. Please configure these in your Edge Function settings.' 
+      }), {
+        status: 500,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+    
     const supabase = createClient(supabaseUrl, supabaseKey);
 
     // Decode JWT to get user ID
@@ -285,7 +299,12 @@ Please generate a comprehensive, well-structured PRD that an AI coding assistant
   } catch (error) {
     console.error('Error in generate-prd:', error);
     const message = error instanceof Error ? error.message : 'Unknown error occurred';
-    return new Response(JSON.stringify({ error: message }), {
+    const stack = error instanceof Error ? error.stack : undefined;
+    console.error('Error stack:', stack);
+    return new Response(JSON.stringify({ 
+      error: message,
+      details: process.env.DENO_ENV === 'development' ? stack : undefined
+    }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
