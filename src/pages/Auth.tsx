@@ -46,12 +46,18 @@ const Auth = () => {
         toast.error("This email is already registered. Please sign in.");
       } else if (error.message.includes("Invalid login")) {
         toast.error("Invalid email or password.");
+      } else if (error.message.includes("Email not confirmed")) {
+        toast.error("Please verify your email before signing in. Check your inbox.");
       } else {
         toast.error(error.message);
       }
     } else {
-      toast.success(isLogin ? "Welcome back!" : "Account created successfully!");
-      navigate("/");
+      if (isLogin) {
+        toast.success("Welcome back!");
+        navigate("/");
+      } else {
+        toast.success("Account created! Please check your email to verify your account.");
+      }
     }
 
     setIsSubmitting(false);
