@@ -71,7 +71,7 @@ async function getApiConfig(supabase: any, userId: string | null): Promise<ApiCo
       }
     }
 
-    // Then, check for admin global API key
+    // Then, check for admin global API key (using service role to bypass RLS)
     const { data: globalKey } = await supabase
       .from('api_keys')
       .select('key_type, api_key')
@@ -174,75 +174,35 @@ serve(async (req) => {
   try {
     const { requirements, projectContext, platform } = await req.json();
 
-    // Get user ID from authorization header if present
-    let userId: string | null = null;
+    // Authentication is required (JWT verified by Supabase)
     const authHeader = req.headers.get('authorization');
-    
-    if (authHeader) {
-      const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-      const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-      const supabase = createClient(supabaseUrl, supabaseKey);
-
-      // Decode JWT to get user ID
-      const token = authHeader.replace('Bearer ', '');
-      const { data: { user } } = await supabase.auth.getUser(token);
-      userId = user?.id || null;
-
-      // Get API configuration (user key > admin key > lovable default)
-      const apiConfig = await getApiConfig(supabase, userId);
-
-      const userMessage = `
-Generate a detailed PRD for the following project requirements. This PRD will be used with ${platform || 'AI coding assistants'}.
-
-**User Requirements:**
-${requirements}
-
-${projectContext ? `**Existing Project Context:**
-${projectContext}
-
-Please analyze this existing project and create a PRD that builds upon or improves the current architecture.` : ''}
-
-Please generate a comprehensive, well-structured PRD that an AI coding assistant can follow step-by-step to implement this project.
-`;
-
-      console.log('Generating PRD for platform:', platform);
-      console.log('Using provider:', apiConfig.provider, 'model:', apiConfig.model);
-
-      const response = await callAI(apiConfig, systemPrompt, userMessage);
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('AI API error:', response.status, errorText);
-        
-        if (response.status === 429) {
-          return new Response(JSON.stringify({ error: 'Rate limit exceeded. Please try again in a moment.' }), {
-            status: 429,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
-        if (response.status === 402) {
-          return new Response(JSON.stringify({ error: 'Usage limit reached. Please add credits to continue.' }), {
-            status: 402,
-            headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-          });
-        }
-        
-        return new Response(JSON.stringify({ error: 'Failed to generate PRD. Check your API key configuration.' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-        });
-      }
-
-      return new Response(response.body, {
-        headers: { ...corsHeaders, 'Content-Type': 'text/event-stream' },
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: 'Authentication required' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
     }
 
-    // No auth header - use default Lovable AI
-    const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
-    if (!LOVABLE_API_KEY) {
-      throw new Error('LOVABLE_API_KEY is not configured');
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Decode JWT to get user ID
+    const token = authHeader.replace('Bearer ', '');
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    
+    if (authError || !user) {
+      console.error('Auth error:', authError);
+      return new Response(JSON.stringify({ error: 'Invalid authentication token' }), {
+        status: 401,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
     }
+
+    const userId = user.id;
+
+    // Get API configuration (user key > admin key > lovable default)
+    const apiConfig = await getApiConfig(supabase, userId);
 
     const userMessage = `
 Generate a detailed PRD for the following project requirements. This PRD will be used with ${platform || 'AI coding assistants'}.
@@ -258,27 +218,15 @@ Please analyze this existing project and create a PRD that builds upon or improv
 Please generate a comprehensive, well-structured PRD that an AI coding assistant can follow step-by-step to implement this project.
 `;
 
-    console.log('Generating PRD (unauthenticated) for platform:', platform);
+    console.log('Generating PRD for user:', userId);
+    console.log('Platform:', platform);
+    console.log('Using provider:', apiConfig.provider, 'model:', apiConfig.model);
 
-    const response = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${LOVABLE_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'google/gemini-2.5-flash',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userMessage }
-        ],
-        stream: true,
-      }),
-    });
+    const response = await callAI(apiConfig, systemPrompt, userMessage);
 
     if (!response.ok) {
       const errorText = await response.text();
-      console.error('AI gateway error:', response.status, errorText);
+      console.error('AI API error:', response.status, errorText);
       
       if (response.status === 429) {
         return new Response(JSON.stringify({ error: 'Rate limit exceeded. Please try again in a moment.' }), {
@@ -293,7 +241,7 @@ Please generate a comprehensive, well-structured PRD that an AI coding assistant
         });
       }
       
-      return new Response(JSON.stringify({ error: 'Failed to generate PRD' }), {
+      return new Response(JSON.stringify({ error: 'Failed to generate PRD. Check your API key configuration.' }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
       });
