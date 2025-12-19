@@ -6,10 +6,11 @@ import { componentTagger } from "lovable-tagger";
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
   server: {
-    host: true, // allow Docker / Coolify
+    host: true,
     port: 3000,
     allowedHosts: [
-      ".sslip.io", // allow all Coolify generated domains
+      ".sslip.io",
+      "prd.vibecodingfield.com",
     ],
   },
   preview: {
@@ -17,6 +18,7 @@ export default defineConfig(({ mode }) => ({
     port: 3000,
     allowedHosts: [
       ".sslip.io",
+      "prd.vibecodingfield.com",
     ],
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
