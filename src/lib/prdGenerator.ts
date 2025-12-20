@@ -244,22 +244,34 @@ Please generate a comprehensive, well-structured PRD that an AI coding assistant
   if (!response.ok) {
     const errorText = await response.text();
     let errorMessage = 'Failed to generate PRD';
+    let errorDetails: any = null;
     
     try {
       const error = JSON.parse(errorText);
       errorMessage = error.error?.message || error.message || errorMessage;
+      errorDetails = error.error || error;
     } catch {
       errorMessage = errorText || errorMessage;
     }
 
     if (response.status === 429) {
-      throw new Error('Rate limit exceeded. Please try again in a moment.');
+      // Rate limit - provide more helpful message
+      const details = errorDetails ? ` Details: ${JSON.stringify(errorDetails)}` : '';
+      throw new Error(`Rate limit exceeded. This can happen if:
+1. Your API key has hit its quota limit
+2. Your IP address was rate-limited
+3. Google's free tier has daily limits
+
+Please try again in 5-10 minutes, or check your Google Cloud Console quotas.${details}`);
     }
     if (response.status === 402) {
-      throw new Error('Usage limit reached. Please add credits to continue.');
+      throw new Error('Usage limit reached. Please add credits to your Google Cloud account.');
+    }
+    if (response.status === 403) {
+      throw new Error('API key is invalid or doesn\'t have permission. Please check your Google Cloud Console API key settings.');
     }
     
-    throw new Error(errorMessage || 'Failed to generate PRD. Check your API key configuration.');
+    throw new Error(errorMessage || `Failed to generate PRD (Status: ${response.status}). Check your API key configuration.`);
   }
 
   if (!response.body) {
