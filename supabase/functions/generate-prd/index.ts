@@ -49,21 +49,21 @@ async function getApiConfig(supabase: any, userId: string | null): Promise<ApiCo
   console.log('=== getApiConfig called ===');
   console.log('User ID:', userId);
   
-  // Default to Google Gemini (free tier available)
-  const defaultConfig: ApiConfig = {
-    provider: 'google',
-    apiKey: Deno.env.get('GOOGLE_API_KEY') || Deno.env.get('GEMINI_API_KEY') || '',
-    model: 'gemini-2.0-flash',
-    endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-  };
-
-  // Try Lovable AI if available
+  // Try Lovable AI first (always available in Lovable Cloud)
   const lovableApiKey = Deno.env.get('LOVABLE_API_KEY') || '';
   const lovableConfig: ApiConfig = {
     provider: 'lovable',
     apiKey: lovableApiKey,
     model: 'google/gemini-2.5-flash',
     endpoint: 'https://ai.gateway.lovable.dev/v1/chat/completions',
+  };
+
+  // Fallback to Google Gemini
+  const defaultConfig: ApiConfig = {
+    provider: 'google',
+    apiKey: Deno.env.get('GOOGLE_API_KEY') || Deno.env.get('GEMINI_API_KEY') || '',
+    model: 'gemini-2.0-flash',
+    endpoint: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
   };
 
   console.log('Environment check:', {
@@ -114,20 +114,20 @@ async function getApiConfig(supabase: any, userId: string | null): Promise<ApiCo
     console.error('Error fetching API keys from database:', error);
   }
 
-  // Fall back to Lovable AI if API key is available, otherwise use Google Gemini
+  // Fall back to Lovable AI if API key is available
   if (lovableApiKey && lovableApiKey.trim() !== '') {
     console.log('Using default Lovable AI');
     return lovableConfig;
   }
 
-  // Use Google Gemini as final fallback (requires GOOGLE_API_KEY or GEMINI_API_KEY env var)
+  // Use Google Gemini as final fallback
   if (defaultConfig.apiKey && defaultConfig.apiKey.trim() !== '') {
     console.log('Using Google Gemini API');
     return defaultConfig;
   }
 
-  // If no API keys are configured, return Lovable config anyway (might work without key in some cases)
-  console.warn('No API keys configured. Using Lovable AI endpoint (may fail if authentication required).');
+  // Return Lovable config as last resort (will use LOVABLE_API_KEY)
+  console.log('Using Lovable AI endpoint');
   return lovableConfig;
 }
 
@@ -213,15 +213,6 @@ serve(async (req) => {
   try {
     const { requirements, projectContext, platform } = await req.json();
 
-    // Authentication is required (JWT verified by Supabase)
-    const authHeader = req.headers.get('authorization');
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Authentication required' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
-    }
-
     const supabaseUrl = Deno.env.get('SUPABASE_URL');
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
     
@@ -231,7 +222,7 @@ serve(async (req) => {
         hasSupabaseKey: !!supabaseKey
       });
       return new Response(JSON.stringify({ 
-        error: 'Server configuration error: Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY environment variables. Please configure these in your Edge Function settings.' 
+        error: 'Server configuration error' 
       }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -240,20 +231,22 @@ serve(async (req) => {
     
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Decode JWT to get user ID
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    // Get user from authorization header if present
+    let userId: string | null = null;
+    const authHeader = req.headers.get('authorization');
     
-    if (authError || !user) {
-      console.error('Auth error:', authError);
-      return new Response(JSON.stringify({ error: 'Invalid authentication token' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
-      });
+    if (authHeader) {
+      const token = authHeader.replace('Bearer ', '');
+      const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+      
+      if (!authError && user) {
+        userId = user.id;
+        console.log('Authenticated user:', userId);
+      } else {
+        console.log('No valid user token, proceeding without user context');
+      }
     }
-
-    const userId = user.id;
-
+    
     console.log('=== PRD Generation Debug ===');
     console.log('User ID:', userId);
     
@@ -270,19 +263,9 @@ serve(async (req) => {
 
     // Validate that we have an API key
     if (!apiConfig.apiKey || apiConfig.apiKey.trim() === '') {
-      console.error('No API key configured - checking available options');
-      
-      // Check what's available
-      const hasLovableKey = !!Deno.env.get('LOVABLE_API_KEY');
-      const hasGoogleKey = !!Deno.env.get('GOOGLE_API_KEY') || !!Deno.env.get('GEMINI_API_KEY');
-      
+      console.error('No API key configured');
       return new Response(JSON.stringify({ 
-        error: 'AI API key not configured. Please configure one of: LOVABLE_API_KEY, GOOGLE_API_KEY, or add an API key in the admin panel.',
-        details: {
-          hasLovableKey,
-          hasGoogleKey,
-          userId
-        }
+        error: 'AI API key not configured. The LOVABLE_API_KEY should be automatically available.',
       }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -303,7 +286,7 @@ Please analyze this existing project and create a PRD that builds upon or improv
 Please generate a comprehensive, well-structured PRD that an AI coding assistant can follow step-by-step to implement this project.
 `;
 
-    console.log('Generating PRD for user:', userId);
+    console.log('Generating PRD');
     console.log('Platform:', platform);
     console.log('Using provider:', apiConfig.provider, 'model:', apiConfig.model);
 
@@ -338,11 +321,9 @@ Please generate a comprehensive, well-structured PRD that an AI coding assistant
   } catch (error) {
     console.error('Error in generate-prd:', error);
     const message = error instanceof Error ? error.message : 'Unknown error occurred';
-    const stack = error instanceof Error ? error.stack : undefined;
-    console.error('Error stack:', stack);
+    console.error('Error details:', error);
     return new Response(JSON.stringify({ 
-      error: message,
-      details: process.env.DENO_ENV === 'development' ? stack : undefined
+      error: message
     }), {
       status: 500,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
