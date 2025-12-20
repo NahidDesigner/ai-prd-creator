@@ -51,6 +51,7 @@ export async function getApiConfig(
         .select('key_type, api_key')
         .eq('user_id', userId)
         .eq('is_global', false)
+        .order('key_type', { ascending: true }) // Prioritize 'openai' over 'google'
         .limit(1)
         .maybeSingle();
 
@@ -60,25 +61,36 @@ export async function getApiConfig(
       }
     }
 
-    // Then, check for admin global API key
-    const { data: globalKey } = await supabase
+    // Then, check for admin global API key - prioritize OpenAI
+    const { data: globalKeys } = await supabase
       .from('api_keys')
       .select('key_type, api_key')
       .eq('is_global', true)
-      .limit(1)
-      .maybeSingle();
+      .order('key_type', { ascending: true }) // 'openai' comes before 'google' alphabetically
+      .limit(10);
 
-    if (globalKey?.api_key) {
-      console.log('✅ Using global admin API key:', globalKey.key_type, '(prefix:', globalKey.api_key.substring(0, 10) + '...)');
-      return getProviderConfig(globalKey.key_type, globalKey.api_key);
+    if (globalKeys && globalKeys.length > 0) {
+      // Prioritize OpenAI if available
+      const openaiKey = globalKeys.find(k => k.key_type === 'openai');
+      if (openaiKey?.api_key) {
+        console.log('✅ Using global OpenAI API key (prefix:', openaiKey.api_key.substring(0, 10) + '...)');
+        return getProviderConfig('openai', openaiKey.api_key);
+      }
+      
+      // Fallback to first available key
+      const firstKey = globalKeys[0];
+      if (firstKey?.api_key) {
+        console.log('✅ Using global admin API key:', firstKey.key_type, '(prefix:', firstKey.api_key.substring(0, 10) + '...)');
+        return getProviderConfig(firstKey.key_type, firstKey.api_key);
+      }
     }
 
     console.log('⚠️ No API keys found in database');
 
-    // Fallback to environment variables (if available in frontend)
+    // Fallback to environment variables (if available in frontend) - prioritize OpenAI
     const openaiKey = import.meta.env.VITE_OPENAI_API_KEY;
     if (openaiKey) {
-      console.log('✅ Using OpenAI API key from environment variable');
+      console.log('✅ Using OpenAI API key from environment variable (prefix:', openaiKey.substring(0, 10) + '...)');
       return {
         provider: 'openai',
         apiKey: openaiKey,
