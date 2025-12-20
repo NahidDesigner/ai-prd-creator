@@ -71,7 +71,17 @@ export async function getApiConfig(
       return getProviderConfig(globalKey.key_type, globalKey.api_key);
     }
 
-    // Fallback to environment variable (if available in frontend)
+    // Fallback to environment variables (if available in frontend)
+    const openaiKey = import.meta.env.VITE_OPENAI_API_KEY;
+    if (openaiKey) {
+      return {
+        provider: 'openai',
+        apiKey: openaiKey,
+        model: 'gpt-4o',
+        endpoint: 'https://api.openai.com/v1/chat/completions',
+      };
+    }
+
     const googleKey = import.meta.env.VITE_GOOGLE_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
     if (googleKey) {
       return {
