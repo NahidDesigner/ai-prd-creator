@@ -1,16 +1,20 @@
 import ReactMarkdown from "react-markdown";
-import { Copy, Download, Check, Sparkles } from "lucide-react";
+import { Copy, Download, Check, Sparkles, X } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 
 interface PRDOutputProps {
   content: string;
   isLoading: boolean;
+  onRefine?: (additionalRequirements: string) => void;
 }
 
-export function PRDOutput({ content, isLoading }: PRDOutputProps) {
+export function PRDOutput({ content, isLoading, onRefine }: PRDOutputProps) {
   const [copied, setCopied] = useState(false);
+  const [showEnhanceMode, setShowEnhanceMode] = useState(false);
+  const [additionalRequirements, setAdditionalRequirements] = useState("");
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(content);
@@ -88,6 +92,82 @@ export function PRDOutput({ content, isLoading }: PRDOutputProps) {
           <span className="inline-block w-2 h-5 bg-primary animate-pulse ml-1" />
         )}
       </div>
+
+      {/* Enhance PRD Section */}
+      {content && !isLoading && !showEnhanceMode && (
+        <div className="mt-4 pt-4 border-t border-border">
+            <Button
+              variant="outline"
+              onClick={() => setShowEnhanceMode(true)}
+              className="w-full gap-2"
+            >
+              <Sparkles className="w-4 h-4" />
+              Enhance PRD
+            </Button>
+        </div>
+      )}
+
+      {showEnhanceMode && (
+        <div className="mt-4 pt-4 border-t border-border space-y-3">
+          <div className="flex items-center justify-between">
+            <label className="text-sm font-medium text-foreground">
+              Add More Requirements or Features
+            </label>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setShowEnhanceMode(false);
+                setAdditionalRequirements("");
+              }}
+              className="h-6 w-6 p-0"
+            >
+              <X className="w-4 h-4" />
+            </Button>
+          </div>
+          <Textarea
+            placeholder="Example: Add user authentication with email/password and Google OAuth, include payment integration with Stripe, add real-time notifications..."
+            value={additionalRequirements}
+            onChange={(e) => setAdditionalRequirements(e.target.value)}
+            className="min-h-[120px] bg-muted/50 border-border focus:border-primary resize-none"
+          />
+          <div className="flex gap-2">
+            <Button
+              onClick={() => {
+                if (onRefine && additionalRequirements.trim()) {
+                  onRefine(additionalRequirements);
+                  setAdditionalRequirements("");
+                  setShowEnhanceMode(false);
+                }
+              }}
+              disabled={!additionalRequirements.trim() || isLoading}
+              className="flex-1 gap-2"
+            >
+              {isLoading ? (
+                <>
+                  <div className="w-4 h-4 border-2 border-primary-foreground/30 border-t-primary-foreground rounded-full animate-spin" />
+                  Refining...
+                </>
+              ) : (
+                <>
+                  <Sparkles className="w-4 h-4" />
+                  Apply Enhancement
+                </>
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowEnhanceMode(false);
+                setAdditionalRequirements("");
+              }}
+              disabled={isLoading}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

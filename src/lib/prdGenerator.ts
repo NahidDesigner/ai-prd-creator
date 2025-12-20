@@ -329,3 +329,128 @@ Please try again in 5-10 minutes, or check your Google Cloud Console quotas.${de
     reader.releaseLock();
   }
 }
+
+export async function* refinePRDStream(
+  existingPRD: string,
+  additionalRequirements: string,
+  platform: string,
+  projectContext?: string
+): AsyncGenerator<string, void, unknown> {
+  const { supabase } = await import('@/integrations/supabase/client');
+  
+  // Get user session
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) {
+    throw new Error('Please sign in to refine PRDs');
+  }
+
+  const { data: { user } } = await supabase.auth.getUser();
+  const userId = user?.id || null;
+
+  // Get API configuration
+  const apiConfig = await getApiConfig(supabase, userId);
+  if (!apiConfig) {
+    throw new Error(
+      'No API key configured. Please add an API key in the Admin Dashboard, or configure VITE_GOOGLE_API_KEY or VITE_OPENAI_API_KEY environment variable.'
+    );
+  }
+
+  const refineMessage = `
+You are refining an existing Product Requirements Document (PRD). 
+
+**Existing PRD:**
+${existingPRD}
+
+**Additional Requirements/Enhancements to Add:**
+${additionalRequirements}
+
+**Target Platform:** ${platform}
+
+${projectContext ? `**Existing Project Context:**
+${projectContext}
+
+` : ''}Please update the PRD to incorporate these new requirements while:
+1. Preserving all existing content and structure
+2. Integrating new features naturally into appropriate sections
+3. Updating related sections (e.g., if adding auth, update Technical Stack, Database Schema, API Endpoints)
+4. Maintaining consistency throughout the document
+5. Not duplicating existing content
+
+If the new requirements conflict with existing ones, note the conflict and suggest a resolution.
+
+Generate the complete, updated PRD that includes both the original content and the new enhancements.
+`;
+
+  // Call AI API
+  const response = await callAI(apiConfig, systemPrompt, refineMessage);
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorMessage = 'Failed to refine PRD';
+    let errorDetails: any = null;
+    
+    try {
+      const error = JSON.parse(errorText);
+      errorMessage = error.error?.message || error.message || errorMessage;
+      errorDetails = error.error || error;
+    } catch {
+      errorMessage = errorText || errorMessage;
+    }
+
+    if (response.status === 429) {
+      const details = errorDetails ? ` Details: ${JSON.stringify(errorDetails)}` : '';
+      throw new Error(`Rate limit exceeded. Please try again in 5-10 minutes.${details}`);
+    }
+    if (response.status === 402) {
+      throw new Error('Usage limit reached. Please add credits to your API account.');
+    }
+    if (response.status === 403) {
+      throw new Error('API key is invalid or doesn\'t have permission.');
+    }
+    
+    throw new Error(errorMessage || `Failed to refine PRD (Status: ${response.status}).`);
+  }
+
+  if (!response.body) {
+    throw new Error('No response body');
+  }
+
+  // Stream the response
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+
+      let newlineIndex: number;
+      while ((newlineIndex = buffer.indexOf("\n")) !== -1) {
+        let line = buffer.slice(0, newlineIndex);
+        buffer = buffer.slice(newlineIndex + 1);
+
+        if (line.endsWith("\r")) line = line.slice(0, -1);
+        if (line.startsWith(":") || line.trim() === "") continue;
+        if (!line.startsWith("data: ")) continue;
+
+        const jsonStr = line.slice(6).trim();
+        if (jsonStr === "[DONE]") break;
+
+        try {
+          const parsed = JSON.parse(jsonStr);
+          const content = parsed.choices?.[0]?.delta?.content;
+          if (content) {
+            yield content;
+          }
+        } catch {
+          // Invalid JSON, skip this line
+        }
+      }
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}

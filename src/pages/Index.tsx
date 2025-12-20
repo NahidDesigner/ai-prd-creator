@@ -16,7 +16,7 @@ const Index = () => {
   const [platform, setPlatform] = useState("cursor");
   const [projectContext, setProjectContext] = useState<string | null>(null);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
-  const { prdContent, isGenerating, generatePRD, setPrdContent } = usePRDGenerator();
+  const { prdContent, isGenerating, generatePRD, refinePRD, setPrdContent } = usePRDGenerator();
   const { user, isLoading } = useAuth();
   const navigate = useNavigate();
 
@@ -158,7 +158,13 @@ Example: I want to build a task management app with user authentication, drag-an
 
           {/* Output Panel */}
           <div className="glass rounded-2xl p-6 min-h-[600px] lg:sticky lg:top-8 lg:max-h-[calc(100vh-4rem)] overflow-hidden flex flex-col">
-            <PRDOutput content={prdContent} isLoading={isGenerating} />
+            <PRDOutput
+              content={prdContent}
+              isLoading={isGenerating}
+              onRefine={(additionalReqs) =>
+                refinePRD(prdContent, additionalReqs, platform, projectContext || undefined)
+              }
+            />
           </div>
         </div>
       </div>
