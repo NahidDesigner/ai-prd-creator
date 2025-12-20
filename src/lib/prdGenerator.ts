@@ -7,7 +7,6 @@ interface ApiConfig {
   endpoint: string;
 }
 
-<<<<<<< HEAD
 export async function getApiConfig(
   supabase: any,
   userId: string | null
