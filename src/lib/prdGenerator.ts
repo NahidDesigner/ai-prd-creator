@@ -1,6 +1,4 @@
-// PRD Generator - Uses Edge Function with Lovable AI
-
-import { supabase } from '@/integrations/supabase/client';
+// PRD Generator - Direct API calls from frontend (no Edge Functions needed!)
 
 interface ApiConfig {
   provider: 'lovable' | 'openai' | 'google' | 'anthropic';
@@ -178,8 +176,6 @@ export async function callAI(
   return response;
 }
 
-=======
->>>>>>> a3a84504a596752e3bad6a40c8ce902c274b0430
 export async function* generatePRDStream(
   requirements: string,
   platform: string,
