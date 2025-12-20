@@ -55,6 +55,7 @@ export async function getApiConfig(
         .maybeSingle();
 
       if (userKey?.api_key) {
+        console.log('✅ Using user API key:', userKey.key_type, '(prefix:', userKey.api_key.substring(0, 10) + '...)');
         return getProviderConfig(userKey.key_type, userKey.api_key);
       }
     }
@@ -68,12 +69,16 @@ export async function getApiConfig(
       .maybeSingle();
 
     if (globalKey?.api_key) {
+      console.log('✅ Using global admin API key:', globalKey.key_type, '(prefix:', globalKey.api_key.substring(0, 10) + '...)');
       return getProviderConfig(globalKey.key_type, globalKey.api_key);
     }
+
+    console.log('⚠️ No API keys found in database');
 
     // Fallback to environment variables (if available in frontend)
     const openaiKey = import.meta.env.VITE_OPENAI_API_KEY;
     if (openaiKey) {
+      console.log('✅ Using OpenAI API key from environment variable');
       return {
         provider: 'openai',
         apiKey: openaiKey,
@@ -84,6 +89,7 @@ export async function getApiConfig(
 
     const googleKey = import.meta.env.VITE_GOOGLE_API_KEY || import.meta.env.VITE_GEMINI_API_KEY;
     if (googleKey) {
+      console.log('✅ Using Google API key from environment variable (prefix:', googleKey.substring(0, 10) + '...)');
       return {
         provider: 'google',
         apiKey: googleKey,
@@ -94,6 +100,7 @@ export async function getApiConfig(
 
     const lovableKey = import.meta.env.VITE_LOVABLE_API_KEY;
     if (lovableKey) {
+      console.log('✅ Using Lovable API key from environment variable');
       return {
         provider: 'lovable',
         apiKey: lovableKey,
