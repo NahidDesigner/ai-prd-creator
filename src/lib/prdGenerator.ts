@@ -1,36 +1,6 @@
-// PRD Generator - Direct API calls from frontend (no Edge Functions needed!)
+// PRD Generator - Uses Edge Function with Lovable AI
 
-const systemPrompt = `You are an expert product manager and technical architect. Your task is to create detailed, professional Product Requirements Documents (PRDs) that are specifically formatted for AI coding assistants like Cursor, Lovable, and Replit.
-
-When generating a PRD, you should:
-
-1. **Understand the Context**: Analyze the user's requirements thoroughly. If they've uploaded project files, understand the existing architecture.
-
-2. **Structure the PRD Properly** with these sections:
-   - **Project Overview**: Brief description, goals, and target users
-   - **Technical Stack**: Recommended technologies, frameworks, and tools
-   - **Core Features**: Detailed breakdown of features with acceptance criteria
-   - **User Stories**: Clear user stories in "As a [user], I want [feature], so that [benefit]" format
-   - **Database Schema**: If applicable, include table structures and relationships
-   - **API Endpoints**: RESTful endpoints with methods, parameters, and responses
-   - **UI/UX Requirements**: Page layouts, components, and user flows
-   - **Step-by-Step Implementation Plan**: Numbered steps for the AI to follow
-   - **Testing Requirements**: What should be tested and how
-   - **Edge Cases & Error Handling**: Potential issues and how to handle them
-
-3. **Format for AI Assistants**:
-   - Use clear markdown formatting
-   - Include code snippets where helpful
-   - Be specific and actionable
-   - Avoid ambiguity
-   - Include file structure recommendations
-
-4. **Platform-Specific Formatting**:
-   - For **Cursor**: Include file paths and detailed code comments
-   - For **Lovable**: Focus on component structure and visual requirements
-   - For **Replit**: Include environment setup and deployment notes
-
-Be thorough but concise. Every instruction should be clear enough that an AI coding assistant can follow it without additional clarification.`;
+import { supabase } from '@/integrations/supabase/client';
 
 interface ApiConfig {
   provider: 'lovable' | 'openai' | 'google' | 'anthropic';
@@ -39,6 +9,7 @@ interface ApiConfig {
   endpoint: string;
 }
 
+<<<<<<< HEAD
 export async function getApiConfig(
   supabase: any,
   userId: string | null
@@ -207,83 +178,55 @@ export async function callAI(
   return response;
 }
 
+=======
+>>>>>>> a3a84504a596752e3bad6a40c8ce902c274b0430
 export async function* generatePRDStream(
   requirements: string,
   platform: string,
   projectContext?: string,
   onConfig?: (config: ApiConfig) => void
 ): AsyncGenerator<string, void, unknown> {
-  const { supabase } = await import('@/integrations/supabase/client');
-  
-  // Get user session
+  // Get current session for auth token
   const { data: { session } } = await supabase.auth.getSession();
+  
   if (!session) {
     throw new Error('Please sign in to generate PRDs');
   }
 
-  const { data: { user } } = await supabase.auth.getUser();
-  const userId = user?.id || null;
-
-  // Get API configuration
-  const apiConfig = await getApiConfig(supabase, userId);
-  if (!apiConfig) {
-    throw new Error(
-      'No API key configured. Please add an API key in the Admin Dashboard, or configure VITE_GOOGLE_API_KEY or VITE_LOVABLE_API_KEY environment variable.'
-    );
-  }
-
-  if (onConfig) {
-    onConfig(apiConfig);
-  }
-
-  const userMessage = `
-Generate a detailed PRD for the following project requirements. This PRD will be used with ${platform || 'AI coding assistants'}.
-
-**User Requirements:**
-${requirements}
-
-${projectContext ? `**Existing Project Context:**
-${projectContext}
-
-Please analyze this existing project and create a PRD that builds upon or improves the current architecture.` : ''}
-
-Please generate a comprehensive, well-structured PRD that an AI coding assistant can follow step-by-step to implement this project.
-`;
-
-  // Call AI API
-  const response = await callAI(apiConfig, systemPrompt, userMessage);
+  // Call the edge function
+  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+  const response = await fetch(`${supabaseUrl}/functions/v1/generate-prd`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${session.access_token}`,
+    },
+    body: JSON.stringify({
+      requirements,
+      platform,
+      projectContext,
+    }),
+  });
 
   if (!response.ok) {
     const errorText = await response.text();
     let errorMessage = 'Failed to generate PRD';
-    let errorDetails: any = null;
     
     try {
       const error = JSON.parse(errorText);
-      errorMessage = error.error?.message || error.message || errorMessage;
-      errorDetails = error.error || error;
+      errorMessage = error.error || errorMessage;
     } catch {
       errorMessage = errorText || errorMessage;
     }
 
     if (response.status === 429) {
-      // Rate limit - provide more helpful message
-      const details = errorDetails ? ` Details: ${JSON.stringify(errorDetails)}` : '';
-      throw new Error(`Rate limit exceeded. This can happen if:
-1. Your API key has hit its quota limit
-2. Your IP address was rate-limited
-3. Google's free tier has daily limits
-
-Please try again in 5-10 minutes, or check your Google Cloud Console quotas.${details}`);
+      throw new Error('Rate limit exceeded. Please try again in a moment.');
     }
     if (response.status === 402) {
-      throw new Error('Usage limit reached. Please add credits to your Google Cloud account.');
-    }
-    if (response.status === 403) {
-      throw new Error('API key is invalid or doesn\'t have permission. Please check your Google Cloud Console API key settings.');
+      throw new Error('Usage limit reached. Please add credits to continue.');
     }
     
-    throw new Error(errorMessage || `Failed to generate PRD (Status: ${response.status}). Check your API key configuration.`);
+    throw new Error(errorMessage);
   }
 
   if (!response.body) {
@@ -330,3 +273,20 @@ Please try again in 5-10 minutes, or check your Google Cloud Console quotas.${de
   }
 }
 
+// Legacy export for compatibility
+export async function getApiConfig(
+  supabase: any,
+  userId: string | null
+): Promise<ApiConfig | null> {
+  // This is now handled server-side in the edge function
+  return null;
+}
+
+export async function callAI(
+  config: ApiConfig,
+  systemPrompt: string,
+  userMessage: string
+): Promise<Response> {
+  // This is now handled server-side in the edge function
+  throw new Error('Direct AI calls are not supported. Use generatePRDStream instead.');
+}
